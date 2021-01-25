@@ -1,44 +1,46 @@
-import torch
-import torch.nn as nn
+import tensorflow as tf
+from normalization import InstanceNormalization
 import math
 
 
-class AdaIN(nn.Module):
-    def __init__(self, d_style, channels_in, epsilon=1e-5):
-        super(AdaIN, self).__init__()
+class ResBLK(tf.keras.layers.Layer):
+    def __init__(self, channels_in, channels_out, normalize=False, down_sample=False):
+        super(ResBLK, self).__init__()
         self.channels_in = channels_in
-        self.epsilon = epsilon
-        self.norm = nn.InstanceNorm2d(channels_in, affine=False)
-        self.fc = nn.Linear(d_style, channels_in * 2, bias=True)
-        
-    def forward(self, x, style):
-        h = self.fc(style)
-        h = h.view(h.size(0), h.size(1), 1, 1)
-        gamma, beta = torch.chunk(h, chunks=2, dim=1)
-        return (1 + gamma) * self.norm(x) + beta
+        self.channels_out = channels_out
+        self.normalize = normalize
+        self.down_sample = down_sample
 
-
-class ResBlk(nn.Module):
-    def __init__(self):
-        
-
-    def short_cut(self, x):
-
-    def residual(self, x):
-        
-    def forward(self, x):
-
-
-class AdaINResBlock(nn.Module):
-    def __init__(self, channels_in, channels_out, up_sample=False):
-        super(AdaINResBlock, self).__init__()
-        
-        
-    def shortcut(self, x):
-        if self.up_sample
-
-    def residual(self, x):
+        self.l_relu = tf.keras.layers.LeakyReLU(alpha=0.2)
+        self.conv_0 = tf.keras.layers.Conv2D(filters=self.channels_out, kernel_size=3, strides=1, padding='same', use_bias=self.use_bias)
+        self.conv_1 = tf.keras.layers.Conv2D(filters=self.channels_out, kernel_size=3, strides=1, padding='same', use_bias=self.use_bias)
     
-    def forward(self, x, style):
-        x = self.residual(x, style) + self.shortcut(x)
+        self.avg_pool = tf.keras.layers.AveragePooling2D(pool_size=2, strides=2, padding='valid')
+        self.i_norm = InstanceNormalization()
+
+
+    def residual(self, x):
+        if self.normalize:
+            x = self.i_norm(x)
+        x = self.l_relu(x)
+        x = self.conv_0(x)
+
+        if self.down_sample:
+            x = self.avg_pool(x)
+        if self.normalize:
+            x = self.i_norm(x)
+        
+        x = self.l_relu(x)
+        x = self.conv_1(x)
+        return x
+    
+    def shortcut(self, x):
+        if self.down_sample:
+            x = self.avg_pool(x)
+        return x
+    
+    def call(self, x):
+        x = self.residual(x) + self.shortcut(x)
         return x / math.sqrt(2)
+
+
