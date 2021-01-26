@@ -2,8 +2,9 @@ import tensorflow as tf
 
 
 class InstanceNormalization(tf.keras.layers.Layer):
-    def __init__(self):
+    def __init__(self, epsilon=1e-5):
         super(InstanceNormalization, self).__init__()
+        self.epsilon = epsilon
     
     def call(self, x):
         x_mean, x_var = tf.nn.moments(x, axes=[1,2], keepdims=True)
@@ -12,9 +13,9 @@ class InstanceNormalization(tf.keras.layers.Layer):
         return x_norm
 
 
-class CrossAdaptiveNormalization(tf.keras.layers.Layer):
+class ACAN(tf.keras.layers.Layer):
     def __init__(self, c_in, d_k):
-        super(CrossAdaptiveNormalization, self).__init__()
+        super(ACAN, self).__init__()
         self.c_in = c_in
         self.d_k = d_k
         self.conv = tf.keras.layers.Conv2D(filters=self.d_k, kernel_size=3, padding='same')
