@@ -121,3 +121,4 @@ class StarganGenerator(tf.keras.Model):
 
     def call(self, x):
         
+        
