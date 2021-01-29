@@ -26,12 +26,12 @@ class ACAN(tf.keras.layers.Layer):
         self.i_norm = InstanceNormalization()
         self.softmax = tf.keras.layers.Softmax()
 
-    def call(self, x):
-        x, t = x
+    def call(self, inputs):
+        x, t = inputs
         n, h, w, c = tf.shape(x)
         len_k = tf.shape(t)[1]
 
-        x_norm self.i_norm(x)
+        x_norm = self.i_norm(x)
 
         x_q = self.conv_q(x)
         x_k = self.conv_k(x)
@@ -43,20 +43,22 @@ class ACAN(tf.keras.layers.Layer):
         scores_x = tf.math.reduce_sum(scores_x, axis=-1, keepdims=True)
 
         t_k = self.W_k(t)
-        mu = self.W_mu(t)
-        sigma = self.W_simga(t)
+        mu_t = self.W_mu(t)
+        sigma_t = self.W_simga(t)
 
-        scores_t = tf.matmul(x_q, tf.transpose(t_k, perm=[0,2,1])
-        socres = tf.concat([scores_t, scores_x], axis=-1)
+        scores_t = tf.matmul(x_q, tf.transpose(t_k, perm=[0,2,1]))
+        scores = tf.concat([scores_t, scores_x], axis=-1)
         scores = self.softmax(scores)
 
-        # To do : concat mus of words and mu of image
+        scores_t, scores_x = tf.split(scores, [-1, 1], -1)
 
-        weighted_mu = tf.matmul(scores, mu)
-        weighted_sigma = tf.matmul(scores, sigma)
+        scores_x = tf.reshape(scores_x, [n, h, w, 1])
 
-        weighted_mu = tf.reshape(weighted_mu, [n, h, w, c])
-        weighted_sigma = tf.reshape(weighted_sigma, [n, h, w, c])
+        weighted_mu_t = tf.matmul(scores_t, mu_t)
+        weighted_sigma_t = tf.matmul(scores_t, sigma_t)
+
+        weighted_mu_t = tf.reshape(weighted_mu_t, [n, h, w, c])
+        weighted_sigma_t = tf.reshape(weighted_sigma_t, [n, h, w, c])
         
-        x = (1 + weighted_sigma) * x_norm + weighted_mu
+        x = (1 + weighted_sigma_t) * x_norm + weighted_mu_t + scores_x * x
         return x

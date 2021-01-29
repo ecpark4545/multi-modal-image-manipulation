@@ -18,9 +18,9 @@ class ScaledDotPorductAttention(tf.keras.layers.Layer):
 class MultiHeadAttention(tf.keras.layers.Layer):
     def __init__(self, d_model, n_head, d_k, d_v, dropout=0.1):
         super(MultiHeadAttention, self).__init__()
-        self.n_head
-        self.d_k
-        self.d_v
+        self.n_head = n_head
+        self.d_k = d_k
+        self.d_v = d_v
         self.W_q = tf.keras.layers.Dense(units=d_k*n_head)
         self.W_k = tf.keras.layers.Dense(units=d_k*n_head)
         self.W_v = tf.keras.layers.Dense(units=d_v*n_head)
@@ -28,7 +28,9 @@ class MultiHeadAttention(tf.keras.layers.Layer):
         self.softmax = tf.keras.layers.Softmax()
         self.fc = tf.keras.layers.Dense(d_model)
 
-    def call(self, q,k,v):
+    def call(self, inputs):
+        q, k, v = inputs
+
         x_residual = q
 
         q = self.W_q(q)

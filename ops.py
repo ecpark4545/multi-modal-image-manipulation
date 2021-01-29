@@ -5,12 +5,13 @@ import numpy as np
 
 
 class ResBLK(tf.keras.layers.Layer):
-    def __init__(self, channels_in, channels_out, normalize=False, down_sample=False):
+    def __init__(self, channels_in, channels_out, normalize=False, down_sample=False, use_bias=True):
         super(ResBLK, self).__init__()
         self.channels_in = channels_in
         self.channels_out = channels_out
         self.normalize = normalize
         self.down_sample = down_sample
+        self.use_bias = use_bias
 
         self.l_relu = tf.keras.layers.LeakyReLU(alpha=0.2)
         self.conv_0 = tf.keras.layers.Conv2D(filters=self.channels_out, kernel_size=3, strides=1, padding='same', use_bias=self.use_bias)
@@ -74,18 +75,16 @@ class ACANResBlock(tf.keras.layers.Layer):
             x = nearest_up_sample(x, scale_factor=2)
         return x
 
-    def call(self, x):
-        x, t = x
+    def call(self, inputs):
+        x, t = inputs
         x = self.residual(x) + self.shortcut(x)
         return x / math.sqrt(2)
 
 
-
-
 class PointWiseFeedForward(tf.keras.layers.Layer):
-    def __init__(self, d_model):
+    def __init__(self, d_model, dff):
         super(PointWiseFeedForward, self).__init__()
-        self.fc1 = tf.keras.layers.Dense(units=diff, activation='relu')
+        self.fc1 = tf.keras.layers.Dense(units=dff, activation='relu')
         self.fc2 = tf.keras.layers.Dense(units=d_model)
 
     def call(self, x):
