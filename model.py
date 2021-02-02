@@ -38,7 +38,7 @@ class ImageEncoder(tf.keras.layers.Layer):
 
 
 class TransformerEncoderLayer(tf.keras.layers.Layer):
-    def __init__(self, d_model, n_head, dff, d_k, d_v):
+    def __init__(self, d_model, n_head, dff, d_k, d_v, dropout=0.1):
         self.self_attention = MultiHeadAttention(d_model, n_head, d_k, d_v)
         self.feed_forward = PointWiseFeedForward(d_model, dff)
         self.dropout1 = tf.keras.layers.Dropout(rate=dropout)
@@ -47,7 +47,7 @@ class TransformerEncoderLayer(tf.keras.layers.Layer):
         self.layer_norm2 = tf.keras.layers.LayerNormalization()
         
     def call(self, x):
-        attn_output = self.self_attention(x, x, x)
+        attn_output = self.self_attention([x, x, x])
         attn_output = self.dropout1(attn_output)
 
         out1 = self.layer_norm1(x + attn_output)
@@ -91,7 +91,7 @@ class TransformerEncoder(tf.keras.layers.Layer):
 
 class StarganGenerator(tf.keras.Model):
     def __init__(self, d_k, img_size=256, img_ch=3, max_conv_dim=512):
-        super(Generator, self).__init__()
+        super(StarganGenerator, self).__init__()
         self.img_size = img_size
         self.img_ch = img_ch
         self.channels = 2**14 // self.img_size
@@ -99,6 +99,11 @@ class StarganGenerator(tf.keras.Model):
         self.d_k = d_k
         self.repeat_num = int(np.log2(self.img_size)) - 4
         self.from_rgb = tf.keras.layers.Conv2D(filters=self.channels, kernel_size=1, strides=1, padding='valid')
+        self.to_rgb = tf.keras.Sequential([
+            InstanceNormalization(epsilon=1e-5),
+            tf.keras.layers.LeakyReLU(alpha=0.2),
+            tf.keras.layers.Conv2D(filters=self.img_ch, kernel_size=1, strides=1, padding='valid')
+        ])
         self.encoder ,self.decoder = self.build_layers()
 
     def build_layers(self):
@@ -111,7 +116,7 @@ class StarganGenerator(tf.keras.Model):
         for i in range(self.repeat_num):
             ch_out = min(ch_in * 2, self.max_conv_dim)
             encoder.append(ResBLK(ch_in, ch_out, normalize=True, down_sample=True))
-            decoder.insert(0, ACANResBlock(ch_in, ch_out, self.d_k, up_sample=True)
+            decoder.insert(0, ACANResBlock(ch_in, ch_out, self.d_k, up_sample=True))
             ch_in = ch_out
         
         for i in range(2):
@@ -119,5 +124,18 @@ class StarganGenerator(tf.keras.Model):
             decoder.insert(0, ACANResBlock(ch_out, ch_out, self.d_k))
         return encoder, decoder
 
-    def call(self, x):
+    def call(self, inputs):
+        x, t = inputs
+        x = self.from_rgb(x)
+        for layer in self.encoder:
+            x = layer(x)
+        for layer in self.decoder:
+            x = layer([x, t])
+        x = self.to_rgb(x)
+        return x
         
+
+if __name__=='__main__':
+    generator = StarganGenerator(512)
+    TransformerEncoder(4, 512, 4, 512, 512, 256, 8500, 10000)
+    
