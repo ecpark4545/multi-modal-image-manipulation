@@ -93,6 +93,7 @@ class D_Match(nn.Module):
         logits = self.outlogits(h)
         return logits.view(-1)
 
+
 class Discriminator():
     def __init__(self, img_size, ch_in=64, embedding_dim=256):
         self.img_size = img_size

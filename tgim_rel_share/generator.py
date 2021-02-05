@@ -12,10 +12,10 @@ from ops import *
 
 
 class CA_NET(nn.Module):
-    def __init__(self):
+    def __init__(self, embedding_dim, condition_dim):
         super(CA_NET, self).__init__()
-        self.t_dim = cfg.TEXT.EMBEDDING_DIM
-        self.c_dim = cfg.GAN.CONDITION_DIM
+        self.t_dim = embedding_dim
+        self.c_dim = condition_dim
         self.fc = nn.Linear(self.t_dim, self.c_dim * 4, bias=True)
         self.relu = GLU()
 
@@ -41,10 +41,10 @@ class CA_NET(nn.Module):
 
 
 class INIT_STAGE_G(nn.Module):
-    def __init__(self, ngf, ncf):
+    def __init__(self, ngf, ncf, nef, nzf):
         super(INIT_STAGE_G, self).__init__()
         self.gf_dim = ngf
-        self.in_dim = cfg.GAN.Z_DIM + ncf + cfg.TEXT.EMBEDDING_DIM  
+        self.in_dim = nzf + ncf + nef  
 
         self.define_module()
 
@@ -130,18 +130,19 @@ class NEXT_STAGE_G(nn.Module):
 
 
 class G_Branch(nn.Module):
-    def __init(self, gf_dim, embedding_dim, condition_dim, branch_step, img_ch=3):
+    def __init(self, gf_dim, embedding_dim, condition_dim, z_dim, branch_step, img_ch=3):
         super(G_Branch, self).__init__()
         self.gf_dim = gf_dim
         self.embedding_dim = embedding_dim
         self.condition_dim = condition_dim
+        self.z_dim = z_dim
         self.branch_step = branch_step
         self.img_ch = img_ch
         self._build_layers()
     
     def _build_layers(self):
-        if self.branch_step == 1:
-            self.g_stage = INIT_STAGE_G(self.gf_dim * 16, self.condition_dim)
+        if self.branch_step == 0:
+            self.g_stage = INIT_STAGE_G(self.gf_dim * 16, self.condition_dim, self.embedding_dim, self.z_dim)
             self.upblock = upBlock(self.embedding_dim, self.gf_dim, scale=3.8)
         else :
             self.g_stage = NEXT_STAGE_G(self.gf_dim, self.embedding_dim, self.condition_dim)
@@ -171,7 +172,7 @@ class Generator(nn.Module):
         self.embedding_dim = embedding_dim
         self.condition_dim = condition_dim
         self.branch_num = branch_num
-        self.ca_net = CA_NET()
+        self.ca_net = CA_NET(self.embedding_dim, self.condition_dim)
         self.branches = self._build_branches()
 
     def _build_branches(self):
@@ -200,7 +201,7 @@ class Generator(nn.Module):
                 att_maps.append(attn)
             fake_imgs.append(fake_img)
 
-        # The output "h_code3(=h_code)" and "c_code" are used in the DCM
+        # The output "h_code3(h_code of last stage)" and "c_code" are used in the DCM
         return fake_imgs, att_maps, mu, logvar, h_code, c_code
 
 
