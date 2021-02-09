@@ -1,22 +1,26 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.utils.model_zoo as model_zoo
+
 from torch.autograd import Variable
 from torchvision import models
+from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
-from ops import *
+
+from .ops import *
 
 class RNN_ENCODER(nn.Module):
-    def __init__(self, ntoken, ninput=300, drop_prob=0.5,
+    def __init__(self, ntoken, words_num=18, ninput=300, drop_prob=0.5,
                  nhidden=128, nlayers=1, bidirectional=True):
         super(RNN_ENCODER, self).__init__()
-        self.n_steps = cfg.TEXT.WORDS_NUM
+        self.n_steps = words_num
         self.ntoken = ntoken                # size of the dictionary
         self.ninput = ninput                # size of each embedding vector
         self.drop_prob = drop_prob          # probability of an element to be zeroed
         self.nlayers = nlayers              # Number of recurrent layers
         self.bidirectional = bidirectional
-        self.rnn_type = cfg.RNN_TYPE
+        self.rnn_type = 'LSTM'
         if bidirectional:
             self.num_directions = 2
         else:
@@ -97,9 +101,9 @@ class RNN_ENCODER(nn.Module):
 
 # The image encoder (Inception_v3)
 class CNN_ENCODER(nn.Module):
-    def __init__(self, nef):
+    def __init__(self, nef, flag=True):
         super(CNN_ENCODER, self).__init__()
-        if cfg.TRAIN.FLAG:
+        if flag:
             self.nef = nef
         else:
             self.nef = 256  # define a uniform ranker

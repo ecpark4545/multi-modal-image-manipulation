@@ -1,4 +1,5 @@
 from __future__ import print_function
+import wandb
 from six.moves import range
 
 import torch
@@ -15,11 +16,10 @@ from miscc.utils import build_super_images, build_super_images2
 from miscc.utils import weights_init, load_params, copy_G_params
 from model import G_DCGAN, G_NET, DCM_Net
 from datasets import prepare_data
-from model import RNN_ENCODER, CNN_ENCODER
+from models.encoder import RNN_ENCODER, CNN_ENCODER
 from VGGFeatureLoss import VGGNet
 
-from miscc.losses import words_loss
-from miscc.losses import discriminator_loss, generator_loss, KL_loss
+from losses import *
 
 import os
 import time
@@ -33,8 +33,7 @@ class condGANTrainer(object):
             self.image_dir = os.path.join(output_dir, 'Image')
             mkdir_p(self.model_dir)
             mkdir_p(self.image_dir)
-
-        torch.cuda.set_device(cfg.GPU_ID)
+        torch.cuda.set_device(torch.cuda.current_device())
         cudnn.benchmark = True
 
         self.batch_size = cfg.TRAIN.BATCH_SIZE
@@ -81,26 +80,14 @@ class condGANTrainer(object):
         print('Load text encoder from:', cfg.TRAIN.NET_E)
         text_encoder.eval()
 
-        ####################### Generator and Discriminators ############## 
+        ####################### Generator and Discriminators ######################## 
         netsD = []
-        if cfg.GAN.B_DCGAN:
-            if cfg.TREE.BRANCH_NUM ==1:
-                from model import D_NET64 as D_NET
-            elif cfg.TREE.BRANCH_NUM == 2:
-                from model import D_NET128 as D_NET
-            else:  # cfg.TREE.BRANCH_NUM == 3:
-                from model import D_NET256 as D_NET
-            netG = G_DCGAN()
-            netsD = [D_NET(b_jcu=False)]
-        else:
-            from model import D_NET64, D_NET128, D_NET256
-            netG = G_NET()
-            if cfg.TREE.BRANCH_NUM > 0:
-                netsD.append(D_NET64())
-            if cfg.TREE.BRANCH_NUM > 1:
-                netsD.append(D_NET128())
-            if cfg.TREE.BRANCH_NUM > 2:
-                netsD.append(D_NET256())
+    
+        from models.discriminator import Discriminator
+        from models.generator import Generator
+        netG = Generator()
+        for i in range(cfg.TREE.BRANCH_NUM):
+            netsD.append(Discriminator(img_size=64 * (2 ** i)))
 
         netG.apply(weights_init)
         for i in range(len(netsD)):
@@ -261,9 +248,8 @@ class condGANTrainer(object):
                 # (1) Prepare training data and Compute text embeddings
                 ######################################################
                 data = data_iter.next()
-                imgs, captions, cap_lens, class_ids, keys, wrong_caps, \
+                imgs, new_imgs, captions, cap_lens, class_ids, keys, wrong_caps, \
                                 wrong_caps_len, wrong_cls_id = prepare_data(data)
-
                 hidden = text_encoder.init_hidden(batch_size)
                 # words_embs: batch_size x nef x seq_len
                 # sent_emb: batch_size x nef
@@ -290,7 +276,6 @@ class condGANTrainer(object):
                 noise.data.normal_(0, 1)
                 fake_imgs, _, mu, logvar, _, _ = netG(noise, sent_emb, words_embs, mask, \
                                                     cnn_code, region_features)
-
                 #######################################################
                 # (3) Update D network
                 ######################################################
@@ -299,7 +284,7 @@ class condGANTrainer(object):
                 D_logs = ''
                 for i in range(len(netsD)):
                     netsD[i].zero_grad()
-                    errD = discriminator_loss(netsD[i], imgs[i], fake_imgs[i],
+                    errD = discriminator_loss(netsD[i], imgs[i], new_imgs[i], fake_imgs[i],
                                               sent_emb, real_labels, fake_labels,
                                               words_embs, cap_lens, image_encoder, class_ids, w_words_embs, 
                                               wrong_caps_len, wrong_cls_id)
@@ -341,9 +326,8 @@ class condGANTrainer(object):
                                           captions, cap_lens, epoch, cnn_code, 
                                           region_features, imgs, name='average')
                     load_params(netG, backup_para)
-
+                # wandb.log({"d_loss": errG_total})
             end_t = time.time()
-
             print('''[%d/%d][%d]
                   Loss_D: %.2f Loss_G: %.2f Time: %.2fs'''
                   % (epoch, self.max_epoch, self.num_batches,

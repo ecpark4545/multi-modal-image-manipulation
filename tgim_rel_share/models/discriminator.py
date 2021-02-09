@@ -1,9 +1,8 @@
 import torch
 import torch.nn as nn
-
 import numpy as np
 
-from ops import Block3x3_leakRelu
+from .ops import Block3x3_leakRelu, downBlock
 
 
 class D_Feature(nn.Module):
@@ -13,7 +12,7 @@ class D_Feature(nn.Module):
         self.img_ch = img_ch
         self.ch_in = ch_in
         self.max_conv_dim = max_conv_dim
-        self.num_layers = np.log2(self.img_size) - 6
+        self.num_layers = int(np.log2(self.img_size)) - 6
         self.from_rgb = nn.Conv2d(self.img_ch, self.ch_in, 4, 2, 1, bias=False)
         self.layers = self._build_layers()
         
@@ -29,11 +28,13 @@ class D_Feature(nn.Module):
                 nn.LeakyReLU(0.2, inplace=True)]
             ch_in = ch_out
 
+        tails = []
         for i in range(self.num_layers):
-            ch_out = max(ch_in // 2, 1)
-            layers += Block3x3_leakRelu(ch_in, ch_out)
+            ch_out = min(ch_in*2, self.max_conv_dim)
+            layers += downBlock(ch_in, ch_out)
+            tails = Block3x3_leakRelu(ch_out, ch_in) + tails
             ch_in = ch_out
-        
+        layers = layers + tails
         return nn.Sequential(*layers)
 
     def forward(self, x):
@@ -47,7 +48,7 @@ class D_Condition(nn.Module):
         super(D_Condition, self).__init__()
         self.ch_in = ch_in
         self.embedding_dim = embedding_dim
-        self.joint_conv = Block3x3_leakRelu(self.ch_in * 8 + self.embedding_dim, self.ch_in)
+        self.joint_conv = nn.Sequential(*Block3x3_leakRelu(self.ch_in * 8 + self.embedding_dim, self.ch_in * 8))
         self.outlogits = nn.Sequential(
             nn.Conv2d(self.ch_in * 8, 1, kernel_size=4, stride=4),
             nn.Sigmoid())
@@ -76,26 +77,28 @@ class D_Adversarial(nn.Module):
 
 class D_Match(nn.Module):
     def __init__(self, ch_in=64, embedding_dim=256):
-        super(D_MATCH, self).__init__()
+        super(D_Match, self).__init__()
         self.ch_in = ch_in
         self.embedding_dim = embedding_dim
 
+        self.jointConv = nn.Sequential(*Block3x3_leakRelu(self.ch_in * 8 * 2 + self.embedding_dim, self.ch_in * 8))
+        
         self.outlogits = nn.Sequential(
-            nn.Conv2d(n_in_c, 2048, kernel_size=1, padding=0, stride=1), 
-            nn.LeakyReLU(negative_slope=0.01, inplace=True), 
-            nn.Conv2d(2048, 1, kernel_size=1, padding=0, stride=1),
+            nn.Conv2d(self.ch_in * 8, 1, kernel_size=4, stride=4),
             nn.Sigmoid())
     
     def forward(self, x1, x2, s):
         s = s.view(s.size(0), s.size(1), 1, 1)
         s = s.repeat(1, 1, x1.size(2), x1.size(3))
         h = torch.cat([x1, x2, s], dim=1)
+        h = self.jointConv(h)
         logits = self.outlogits(h)
         return logits.view(-1)
 
 
-class Discriminator():
+class Discriminator(nn.Module):
     def __init__(self, img_size, ch_in=64, embedding_dim=256):
+        super(Discriminator, self).__init__()
         self.img_size = img_size
         self.ch_in = ch_in
         self.embedding_dim = embedding_dim

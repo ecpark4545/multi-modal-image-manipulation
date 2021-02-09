@@ -16,9 +16,9 @@ class GLU(nn.Module):
 
 # The implementation of ACM (affine combination module)
 class ACM(nn.Module): 
-    def __init__(self, channel_num):
+    def __init__(self, channel_num, gf_dim=32):
         super(ACM, self).__init__()
-        self.conv = conv3x3(cfg.GAN.GF_DIM, 128)
+        self.conv = conv3x3(gf_dim, 128)
         self.conv_weight = conv3x3(128, channel_num)    # weight
         self.conv_bias = conv3x3(128, channel_num)      # bias
 
@@ -67,12 +67,18 @@ def upBlock(in_planes, out_planes, scale=2):
         GLU()]
     return block
 
+def downBlock(in_planes, out_planes):
+    block = [
+        nn.Conv2d(in_planes, out_planes, 4, 2, 1, bias=False),
+        nn.BatchNorm2d(out_planes),
+        nn.LeakyReLU(0.2, inplace=True)]
+    return block
+
 
 # ############## D networks ##########################
 def Block3x3_leakRelu(in_planes, out_planes):
-    block = nn.Sequential(
+    block = [
         conv3x3(in_planes, out_planes),
         nn.BatchNorm2d(out_planes),
-        nn.LeakyReLU(0.2, inplace=True)
-    )
+        nn.LeakyReLU(0.2, inplace=True)]
     return block
