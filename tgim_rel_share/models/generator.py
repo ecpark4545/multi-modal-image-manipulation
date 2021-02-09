@@ -4,11 +4,11 @@ from torch.autograd import Variable
 import torch.nn.functional as F
 
 from miscc.config import cfg
-from attention import SpatialAttentionGeneral as SPATIAL_ATT
-from attention import ChannelAttention as CHANNEL_ATT
-from attention import DCMChannelAttention as DCM_CHANNEL_ATT
+from .attention import SpatialAttentionGeneral as SPATIAL_ATT
+from .attention import ChannelAttention as CHANNEL_ATT
+from .attention import DCMChannelAttention as DCM_CHANNEL_ATT
 
-from ops import *
+from .ops import *
 
 
 class CA_NET(nn.Module):
@@ -55,10 +55,10 @@ class INIT_STAGE_G(nn.Module):
             nn.BatchNorm1d(ngf * 4 * 4 * 2),
             GLU())
 
-        self.upsample1 = upBlock(ngf, ngf // 2)
-        self.upsample2 = upBlock(ngf // 2, ngf // 4)
-        self.upsample3 = upBlock(ngf // 4, ngf // 8)
-        self.upsample4 = upBlock(ngf // 8, ngf // 16)
+        self.upsample1 = nn.Sequential(*upBlock(ngf, ngf // 2))
+        self.upsample2 = nn.Sequential(*upBlock(ngf // 2, ngf // 4))
+        self.upsample3 = nn.Sequential(*upBlock(ngf // 4, ngf // 8))
+        self.upsample4 = nn.Sequential(*upBlock(ngf // 8, ngf // 16))
 
     def forward(self, z_code, c_code, cnn_code):
 
@@ -104,7 +104,7 @@ class NEXT_STAGE_G(nn.Module):
         self.att = SPATIAL_ATT(ngf, self.ef_dim)            # spatial attention
         self.channel_att = CHANNEL_ATT(ngf, self.ef_dim)    # channel-wise attention
         self.residual = self._make_layer(ResBlock, ngf * 3)
-        self.upsample = upBlock(ngf * 3, ngf)
+        self.upsample = nn.Sequential(*upBlock(ngf * 3, ngf))
         self.SAIN = ACM(ngf * 3)
 
     def forward(self, h_code, c_code, word_embs, mask, img):
@@ -130,7 +130,7 @@ class NEXT_STAGE_G(nn.Module):
 
 
 class G_Branch(nn.Module):
-    def __init(self, gf_dim, embedding_dim, condition_dim, z_dim, branch_step, img_ch=3):
+    def __init__(self, gf_dim, embedding_dim, condition_dim, branch_step, z_dim=100, img_ch=3):
         super(G_Branch, self).__init__()
         self.gf_dim = gf_dim
         self.embedding_dim = embedding_dim
@@ -143,17 +143,17 @@ class G_Branch(nn.Module):
     def _build_layers(self):
         if self.branch_step == 0:
             self.g_stage = INIT_STAGE_G(self.gf_dim * 16, self.condition_dim, self.embedding_dim, self.z_dim)
-            self.upblock = upBlock(self.embedding_dim, self.gf_dim, scale=3.8)
+            self.upblock = nn.Sequential(*upBlock(self.embedding_dim, self.gf_dim, scale=3.8))
         else :
             self.g_stage = NEXT_STAGE_G(self.gf_dim, self.embedding_dim, self.condition_dim)
-            self.upblock = upBlock(self.gf_dim, self.gf_dim, scale=2)
-        self.acm = layers.append(ACM(self.gf_dim))
+            self.upblock = nn.Sequential(*upBlock(self.gf_dim, self.gf_dim, scale=2))
+        self.acm =ACM(self.gf_dim)
         self.to_rgb = nn.Sequential(
             nn.Conv2d(self.gf_dim, self.img_ch, kernel_size=3, stride=1, padding=1, bias=False),
             nn.Tanh())
     
     def forward(self, h_code, c_code, word_embs, img_code, mask=None):
-        if self.branch_step == 1:
+        if self.branch_step == 0:
             # initial step of g : h_code <= z_code,  word_embs <= cnn_code,  img_code <= region_features
             h_code = self.g_stage(h_code, c_code, word_embs)
             attn = None
@@ -166,19 +166,20 @@ class G_Branch(nn.Module):
 
 
 class Generator(nn.Module):
-    def __init__(self, gf_dim, embedding_dim, condition_dim, branch_num):
+    def __init__(self, gf_dim=32, embedding_dim=256, condition_dim=100, branch_num=3, z_dim=100):
         super(Generator, self).__init__()
         self.gf_dim = gf_dim
         self.embedding_dim = embedding_dim
         self.condition_dim = condition_dim
         self.branch_num = branch_num
+        self.z_dim = z_dim
         self.ca_net = CA_NET(self.embedding_dim, self.condition_dim)
         self.branches = self._build_branches()
 
     def _build_branches(self):
         branches = []
         for i in range(self.branch_num):
-            branches.append(G_Branch(self.gf_dim, self.embedding_dim, self.condition_dim, branch_step=i))
+            branches.append(G_Branch(self.gf_dim, self.embedding_dim, self.condition_dim, i, z_dim=self.z_dim))
         return branches
 
     def forward(self, z_code, sent_emb, word_embs, mask, cnn_code, region_features):
