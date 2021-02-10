@@ -66,3 +66,18 @@ class MACAM(nn.Module):
 
         h = self.instance_norm(h) * gamma + beta
         return h
+
+
+class MACAMResBlock(nn.Module):
+    def __init__(self):
+        super(MACAMResBlock, self).__init__()
+        
+    
+    def shortcut(self, x):
+        return x
+
+    def residual(self, x):
+        return x
+
+    def forward(self, x):
+        return self.shortcut(x) + self.residual(x)
