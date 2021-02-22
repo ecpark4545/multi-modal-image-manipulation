@@ -14,9 +14,8 @@ def l2norm(X, norm_dim=1):
 
 
 class EncoderText(nn.Module):
-    def __init__(self, opt, use_abs=False, no_txt_norm=False, nonorm=False):
+    def __init__(self, vocab_size, word_dim, embed_size, num_layers, use_abs=False, no_txt_norm=False, nonorm=False):
         super(EncoderText, self).__init__()
-        vocab_size, word_dim, embed_size, num_layers = opt.vocab_size,  opt.word_dim,  opt.embed_size, opt.num_layers
 
         self.no_txtnorm = no_txt_norm
         self.no_norm_gd = nonorm
@@ -39,10 +38,12 @@ class EncoderText(nn.Module):
         """
         # Embed word ids to vectors
         x = self.embed(x)
-        packed = pack_padded_sequence(x, lengths, batch_first=True)
+        # packed = pack_padded_sequence(x, lengths, batch_first=True)
 
         # Forward propagate RNN
-        out, _ = self.rnn(packed)
+        # out, _ = self.rnn(packed)
+        out, s = self.rnn(x)
+        return out, s
 
         # Reshape *final* output to (batch_size, hidden_size)
         padded = pad_packed_sequence(out, batch_first=True)

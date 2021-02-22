@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 import torch.nn as nn
-from models.networks.vgg16_c import VGG16_C
+from networks.vgg16_c import VGG16_C
 
 
 def crop(data1, data2, crop_h, crop_w):

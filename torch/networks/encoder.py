@@ -17,7 +17,7 @@ def l2norm(x, norm_dim=1):
 
 
 class ResNetbdcnEncoder(BaseNetwork):
-    def __init__(self, opt):
+    def __init__(self, edge_level, edge_model_path, edge_tanh=False):
         super().__init__()
         img_dim = 2048
         embed_size = 1024
@@ -28,12 +28,12 @@ class ResNetbdcnEncoder(BaseNetwork):
                                  self.cnn.layer3, self.cnn.layer4)
         self.conv1x1 = nn.Conv2d(img_dim, embed_size, 1)
         # bdcn
-        self.edgenet = BDCN_multi(level=opt.edge_level)
-        edge_params = torch.load(opt.edge_model_path, map_location='cpu')
-        self.edgenet.load_state_dict(edge_params)
+        # self.edgenet = BDCN_multi(level=edge_level)
+        # edge_params = torch.load(edge_model_path, map_location='cpu')
+        # self.edgenet.load_state_dict(edge_params)
         self.avg_pool = nn.AdaptiveAvgPool2d((1, 1))
         self.tanh = nn.Tanh()
-        self.edge_tanh = opt.edge_tanh
+        self.edge_tanh = edge_tanh
 
     def forward(self, x0, skip=False, norm=True, pool=False):
         xe = (x0 + 1) / 2.0 * 255
@@ -41,7 +41,7 @@ class ResNetbdcnEncoder(BaseNetwork):
         xe[:, 0, :, :] = xe[:, 0, :, :] - 123.0
         xe[:, 1, :, :] = xe[:, 1, :, :] - 117.0
         xe[:, 2, :, :] = xe[:, 2, :, :] - 104.0
-        edge = self.edgenet(xe)
+        # edge = self.edgenet(xe)
         x = self.cnn(x0)
         x = self.conv1x1(x)
         if pool:
@@ -49,9 +49,11 @@ class ResNetbdcnEncoder(BaseNetwork):
         if norm:
             x = l2norm(x)
         if self.edge_tanh:
-            return x, self.tanh(edge)
+            # return x, self.tanh(edge)
+            return x
         else:
-            return x, edge
+            # return x, edge
+            return x
 
     def get_cnn(self, arch, pretrained):
         if pretrained:

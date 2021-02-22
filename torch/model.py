@@ -16,7 +16,7 @@ class Model(nn.Module):
         self._build_optimizer()
 
     def _build_model(self):
-        self.image_enc = ResNetbdcnEncoder(self.opt)
+        self.image_enc = ResNetbdcnEncoder(self.opt.edge_level, self.opt.edge_model_path, self.opt.edge_tanh)
         self.text_enc = EncoderText(self.opt)
         self.netG = Generator(
             self.opt.w_dim, self.opt.q_dim, self.opt.img_size)

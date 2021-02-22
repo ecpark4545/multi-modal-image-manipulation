@@ -11,7 +11,7 @@ class MaskingAllocation(nn.Module):
 
         w_target_t = torch.transpose(w_target, 1, 2)
 
-        scores = torch.dot(w_source, w_target_t)
+        scores = torch.matmul(w_source, w_target_t)
         sum = torch.sum(scores, 1, keepdim=True)
         left_scores = sum - scores
         indices = torch.argmax(left_scores, -1)
@@ -36,14 +36,16 @@ class CrossAttention(nn.Module):
         self.fc_k = nn.Linear(w_dim, q_dim)
 
     def forward(self, words, h):
-        batch_size, h, w = h.size(0), h.size(1), h.size(2)
+        batch_size, H, W = h.size(0), h.size(2), h.size(3)
 
-        q = self.conv0(h).view(batch_size, h * w, -1)
+        q = self.conv0(h)
+        q = q.view(batch_size, -1, H * W)
+
         k = self.fc_k(words)
+        # k = k.transpose(1, 2)
 
-        k = k.transpose(1, 2)
-        attn = torch.matmul(q, k)
-        attn = attn.view(batch_size, h, w, -1)
+        attn = torch.matmul(k, q)
+        attn = attn.view(batch_size, -1, H, W)
         return attn
 
 
@@ -60,10 +62,17 @@ class MACAM(nn.Module):
         w_alloc = self.masking_allocation(w_source, w_target)
 
         beta, gamma = self.fc(w_alloc).chunk(2, -1)
+        beta, gamma = torch.transpose(beta, 1, 2), torch.transpose(gamma, 1, 2)
 
-        beta = torch.matmul(attn, beta)
-        gamma = torch.matmul(attn, gamma)
+        B, H, W = attn.size(0), attn.size(2), attn.size(3)
 
+        attn = attn.view(attn.size(0), attn.size(1), -1)
+        beta = torch.matmul(beta, attn)
+        gamma = torch.matmul(gamma, attn)
+        
+        beta = beta.view(B, -1, H, W)
+        gamma = gamma.view(B, -1, H, W)
+        
         h = self.instance_norm(h) * gamma + beta
         return h
 
@@ -79,7 +88,7 @@ class MACAMResBlock(nn.Module):
 
         self.conv_0 = nn.Conv2d(ch_in, ch_out, 3, 1, 1)
         self.macam_0 = MACAM(ch_in, w_dim, q_dim)
-        self.conv_1 = nn.Conv2d(ch_in, ch_out, 3, 1, 1)
+        self.conv_1 = nn.Conv2d(ch_out, ch_out, 3, 1, 1)
         self.macam_1 = MACAM(ch_out, w_dim, q_dim)
         self.l_relu = nn.LeakyReLU(2e-1)
         self.skip_flag = ch_in != ch_out
@@ -88,7 +97,7 @@ class MACAMResBlock(nn.Module):
 
     def shortcut(self, h):
         if self.up_sample:
-            h = self.up(h, scale_factor=2)
+            h = self.up(h)
         if self.skip_flag:
             h = self.skip_conv(h)
         return h
@@ -97,7 +106,7 @@ class MACAMResBlock(nn.Module):
         h = self.macam_0(h, w_source, w_target)
         h = self.l_relu(h)
         if self.up_sample:
-            h = self.up(h, scale_factor=2)
+            h = self.up(h)
         h = self.conv_0(h)
         h = self.macam_1(h, w_source, w_target)
         h = self.l_relu(h)

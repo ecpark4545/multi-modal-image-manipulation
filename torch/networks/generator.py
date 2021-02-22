@@ -45,5 +45,5 @@ class Generator(nn.Module):
         for block in self.blocks:
             h = block(h, w_source, w_target)
         x = self.to_rgb(h)
-        x = torch.F.tanh(x)
+        x = torch.nn.functional.tanh(x)
         return x
