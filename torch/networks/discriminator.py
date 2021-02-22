@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 
-from .ops import Block3x3_leakRelu, downBlock
+from networks.ops import *
 
 
 class D_Feature(nn.Module):
@@ -41,26 +41,6 @@ class D_Feature(nn.Module):
         x = self.from_rgb(x)
         x = self.layers(x)
         return x
-
-
-class D_Condition(nn.Module):
-    def __init__(self, ch_in=64, embedding_dim=256):
-        super(D_Condition, self).__init__()
-        self.ch_in = ch_in
-        self.embedding_dim = embedding_dim
-        self.joint_conv = nn.Sequential(
-            *Block3x3_leakRelu(self.ch_in * 8 + self.embedding_dim, self.ch_in * 8))
-        self.outlogits = nn.Sequential(
-            nn.Conv2d(self.ch_in * 8, 1, kernel_size=4, stride=4),
-            nn.Sigmoid())
-
-    def forward(self, x, condition):
-        condition = condition.view(-1, self.embedding_dim, 1, 1)
-        condition = condition.repeat(1, 1, 4, 4)
-        x_c = torch.cat((x, condition), 1)
-        x_c = self.joint_conv(x_c)
-        logit = self.outlogits(x_c)
-        return logit.view(-1)
 
 
 class D_Adversarial(nn.Module):
@@ -104,9 +84,7 @@ class Discriminator(nn.Module):
         self.img_size = img_size
         self.ch_in = ch_in
         self.embedding_dim = embedding_dim
-        self.D_feature = D_Feature(self.img_size, ch_in=self.ch_in)
-        self.D_condition = D_Condition(
+        self.feature = D_Feature(self.img_size, ch_in=self.ch_in)
+        self.match = D_Match(
             ch_in=self.ch_in, embedding_dim=self.embedding_dim)
-        self.D_match = D_Match(
-            ch_in=self.ch_in, embedding_dim=self.embedding_dim)
-        self.D_adv = D_Adversarial(ch_in=self.ch_in)
+        self.adv = D_Adversarial(ch_in=self.ch_in)
