@@ -1,30 +1,41 @@
 import torch
 import torch.nn as nn
+import torchvision.transforms as transforms
+import torch.nn.functional as F
 
 from networks.encoder import ResNetbdcnEncoder
 from networks.text_encoder import EncoderText
 from networks.generator import Generator
 from networks.discriminator import Discriminator
 
+from new_dataset import CocoOneCategoryDataset
+
+import numpy as np
 
 class Model(nn.Module):
     def __init__(self, opt):
         super(Model, self).__init__()
         self.opt = opt
-        self._build_model()
         self._build_dataloader()
+        self._build_model()
         self._build_optimizer()
 
     def _build_model(self):
         self.image_enc = ResNetbdcnEncoder(None, None)
-        self.text_enc = EncoderText(self.opt.vocab_size, self.opt.embedding_dim, self.opt.w_dim, self.opt.num_layers)
+        self.text_enc = EncoderText(self.dataset.vocab_size, self.opt.embedding_dim, self.opt.w_dim, self.opt.num_layers)
         self.netG = Generator(
             self.opt.w_dim, self.opt.q_dim, self.opt.img_size)
         self.netD = Discriminator(
-            self.opt.img_size, self.opt.ndf, self.opt.embedding_dim)
+            self.opt.img_size, self.opt.ndf, self.opt.w_dim)
+        self.recon_criterion = nn.L1Loss()
 
     def _build_dataloader(self):
-        self.dataset = None
+        image_transform = transforms.Compose([
+        transforms.Scale(int(256 * 76 / 64))])
+        self.dataset = CocoOneCategoryDataset(
+            self.opt.data_path, self.opt.words_num, self.opt.captions_num, self.opt.img_size, transform=image_transform)
+        self.dataloader = torch.utils.data.DataLoader(
+            self.dataset, batch_size=self.opt.batch_size, drop_last=True, shuffle=True, num_workers=int(self.opt.workers))
 
     def _build_optimizer(self):
         G_params = list(self.netG.parameters())
@@ -41,7 +52,8 @@ class Model(nn.Module):
 
     def train(self):
         for i in range(self.opt.total_iter):
-            for data in self.dataset:
+            data_iter = iter(self.dataloader)
+            for data in data_iter:
                 g_loss = self.compute_g_loss(data)
                 g_loss.backward()
                 self.optimizer_G.step()
@@ -49,23 +61,26 @@ class Model(nn.Module):
                 d_loss = self.compute_d_loss(data)
                 d_loss.backward()
                 self.optimizer_D.step()
+                print('train!!!')
+                break
+            break
 
     def compute_g_loss(self, data):
         img1, img2, source_cap, intra_cap, inter_cap = data
-
+        
         img1_emb = self.image_enc(img1)
-        source_w_embs, source_s_emb = self.text_enc(source_cap)
-        intra_w_embs, intra_s_emb = self.text_enc(intra_cap)
-        inter_w_embs, inter_s_emb = self.text_enc(inter_cap)
+        source_w_embs, source_s_emb = self.text_enc(source_cap, [0])
+        intra_w_embs, intra_s_emb = self.text_enc(intra_cap, [0])
+        inter_w_embs, inter_s_emb = self.text_enc(inter_cap, [0])
 
         intra_fake_img = self.netG(img1_emb, source_w_embs, intra_w_embs)
         inter_fake_img = self.netG(img1_emb, source_w_embs, inter_w_embs)
+
         recon_img = self.netG(img1_emb, source_w_embs, source_w_embs)
 
         img1_feature = self.netD.feature(img1)
         intra_fake_feature = self.netD.feature(intra_fake_img)
         inter_fake_feature = self.netD.feature(inter_fake_img)
-
         # adversarial loss
         logits_intra = self.netD.adv(inter_fake_feature)
         logtis_inter = self.netD.adv(intra_fake_feature)
@@ -77,7 +92,7 @@ class Model(nn.Module):
         matching_loss = self.cross_entropy_from_logits(match_intra, 1) + self.cross_entropy_from_logits(match_inter, 1)
 
         # reconstruction loss
-        recon_loss = nn.L1Loss(recon_img, img1)
+        recon_loss = self.recon_criterion(recon_img, img1)
         
         g_loss = adv_loss + matching_loss + recon_loss
 
@@ -88,9 +103,9 @@ class Model(nn.Module):
 
         img1_emb = self.image_enc(img1)
         img2_emb = self.image_enc(img2)
-        source_w_embs, source_s_emb = self.text_enc(source_cap)
-        intra_w_embs, intra_s_emb = self.text_enc(intra_cap)
-        inter_w_embs, inter_s_emb = self.text_enc(inter_cap)
+        source_w_embs, source_s_emb = self.text_enc(source_cap, [0])
+        intra_w_embs, intra_s_emb = self.text_enc(intra_cap, [0])
+        inter_w_embs, inter_s_emb = self.text_enc(inter_cap, [0])
 
         intra_fake_img = self.netG(img1_emb, source_w_embs, intra_w_embs)
         inter_fake_img = self.netG(img1_emb, source_w_embs, inter_w_embs)

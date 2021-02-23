@@ -70,7 +70,6 @@ class D_Match(nn.Module):
             nn.Sigmoid())
 
     def forward(self, x1, x2, s):
-        # print(s.shape)
         s = s.view(s.size(0), s.size(1), 1, 1)
         s = s.repeat(1, 1, x1.size(2), x1.size(3))
         h = torch.cat([x1, x2, s], dim=1)

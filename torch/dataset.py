@@ -1,377 +1,199 @@
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-from __future__ import unicode_literals
-
-
-from nltk.tokenize import RegexpTokenizer
-from collections import defaultdict
-
-import torch
-import torch.utils.data as data
-from torch.autograd import Variable
-import torchvision.transforms as transforms
-import torchvision.transforms.functional as F
-
-import os
-import sys
+import glob
 import numpy as np
-import pandas as pd
+import pickle
+import torch
+import os
+
+from collections import defaultdict
+from nltk.tokenize import RegexpTokenizer
+import torchvision.transforms as transforms
+
 from PIL import Image
-import numpy.random as random
-
-if sys.version_info[0] == 2:
-    import cPickle as pickle
-else:
-    import pickle
 
 
-def prepare_data(data, cuda=True):
-    (
-        imgs,
-        new_imgs,
-        captions,
-        captions_lens,
-        class_ids,
-        keys,
-        wrong_caps,
-        wrong_caps_len,
-        wrong_cls_id,
-    ) = data
-
-    # sort data by the length in a decreasing order
-    sorted_cap_lens, sorted_cap_indices = torch.sort(captions_lens, 0, True)
-
-    real_imgs = []
-    for i in range(len(imgs)):
-        imgs[i] = imgs[i][sorted_cap_indices]
-        if cuda:
-            real_imgs.append(Variable(imgs[i]).cuda())
-        else:
-            real_imgs.append(Variable(imgs[i]))
-
-    new_real_imgs = []
-    for i in range(len(new_imgs)):
-        new_imgs[i] = new_imgs[i][sorted_cap_indices]
-        if cuda:
-            new_real_imgs.append(Variable(new_imgs[i]).cuda())
-        else:
-            new_real_imgs.append(Variable(new_imgs[i]))
-
-    captions = captions[sorted_cap_indices].squeeze()
-    class_ids = class_ids[sorted_cap_indices].numpy()
-    keys = [keys[i] for i in sorted_cap_indices.numpy()]
-
-    if cuda:
-        captions = Variable(captions).cuda()
-        sorted_cap_lens = Variable(sorted_cap_lens).cuda()
-    else:
-        captions = Variable(captions)
-        sorted_cap_lens = Variable(sorted_cap_lens)
-
-    ##
-    w_sorted_cap_lens, w_sorted_cap_indices = torch.sort(
-        wrong_caps_len, 0, True)
-
-    wrong_caps = wrong_caps[w_sorted_cap_indices].squeeze()
-    wrong_cls_id = wrong_cls_id[w_sorted_cap_indices].numpy()
-
-    if cuda:
-        wrong_caps = Variable(wrong_caps).cuda()
-        w_sorted_cap_lens = Variable(w_sorted_cap_lens).cuda()
-    else:
-        wrong_caps = Variable(wrong_caps)
-        w_sorted_cap_lens = Variable(w_sorted_cap_lens)
-
-    return [
-        real_imgs,
-        new_real_imgs,
-        captions,
-        sorted_cap_lens,
-        class_ids,
-        keys,
-        wrong_caps,
-        w_sorted_cap_lens,
-        wrong_cls_id,
-    ]
-
-
-def get_img(img_path, flip, x, y, bbox=None, transform=None, normalize=None):
-    img = Image.open(img_path).convert("RGB")
-    width, height = img.size
-    if bbox is not None:
-        r = int(np.maximum(bbox[2], bbox[3]) * 0.75)
-        center_x = int((2 * bbox[0] + bbox[2]) / 2)
-        center_y = int((2 * bbox[1] + bbox[3]) / 2)
-        y1 = np.maximum(0, center_y - r)
-        y2 = np.minimum(height, center_y + r)
-        x1 = np.maximum(0, center_x - r)
-        x2 = np.minimum(width, center_x + r)
-        img = img.crop([x1, y1, x2, y2])
-
-    if transform is not None:
-        img = transform(img)
-        # crop
-        img = img.crop([x, y, x + 256, y + 256])
-        if flip:
-            img = F.hflip(img)
-    ret = normalize(img)
-
-    return ret
-
-
-class TextDataset(data.Dataset):
-    def __init__(
-        self,
-        data_dir,
-        captions_num=10,
-        words_num=18,
-        split="train",
-        img_size=256,
-        transform=None,
-        target_transform=None,
-    ):
+class CocoOneCategoryDataset(torch.utils.data.Dataset):
+    def __init__(self, data_path, words_num=18, captions_num=5, img_size=256, transform=None):
+        self.data_path = data_path
+        self.words_num = words_num
+        self.captions_num = captions_num
+        self.img_size = img_size
         self.transform = transform
-        self.norm = transforms.Compose(
+        self.normalize = transforms.Compose(
             [transforms.ToTensor(), transforms.Normalize(
                 (0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
         )
-        self.target_transform = target_transform
-        self.embeddings_num = captions_num
-        self.words_num = words_num
 
-        self.imsize = img_size
-
-        self.data = []
-        self.data_dir = data_dir
-        if data_dir.find("birds") != -1:
-            self.bbox = self.load_bbox()
-        else:
-            self.bbox = None
-        split_dir = os.path.join(data_dir, split)
-
-        (
-            self.filenames,
-            self.captions,
-            self.ixtoword,
-            self.wordtoix,
-            self.n_words,
-        ) = self.load_text_data(data_dir, split)
-
-        self.class_id = self.load_class_id(split_dir, len(self.filenames))
-        self.number_example = len(self.filenames)
-
-    def load_bbox(self):
-        data_dir = self.data_dir
-        bbox_path = os.path.join(data_dir, "CUB_200_2011/bounding_boxes.txt")
-        df_bounding_boxes = pd.read_csv(
-            bbox_path, delim_whitespace=True, header=None).astype(int)
-        #
-        filepath = os.path.join(data_dir, "CUB_200_2011/images.txt")
-        df_filenames = pd.read_csv(
-            filepath, delim_whitespace=True, header=None)
-        filenames = df_filenames[1].tolist()
-        print("Total filenames: ", len(filenames))
-        #
-        filename_bbox = {img_file[:-4]: [] for img_file in filenames}
-        numImgs = len(filenames)
-        for i in range(0, numImgs):
-            bbox = df_bounding_boxes.iloc[i][1:].tolist()
-
-            key = filenames[i][:-4]
-            filename_bbox[key] = bbox
-        #
-        return filename_bbox
-
-    def load_captions(self, data_dir, filenames):
-        all_captions = []
-        for i in range(len(filenames)):
-            cap_path = "%s/text/%s.txt" % (data_dir, filenames[i])
-            with open(cap_path, "r") as f:
-                captions = f.read().split("\n")
-                cnt = 0
-                for cap in captions:
-                    if len(cap) == 0:
-                        continue
-                    cap = cap.replace("\ufffd\ufffd", " ")
-                    # picks out sequences of alphanumeric characters as tokens
-                    # and drops everything else
-                    tokenizer = RegexpTokenizer(r"\w+")
-                    tokens = tokenizer.tokenize(cap.lower())
-
-                    if len(tokens) == 0:
-                        print("cap", cap)
-                        continue
-
-                    tokens_new = []
-                    for t in tokens:
-                        t = t.encode("ascii", "ignore").decode("ascii")
-                        if len(t) > 0:
-                            tokens_new.append(t)
-                    all_captions.append(tokens_new)
-                    cnt += 1
-                    if cnt == self.embeddings_num:
-                        break
-                if cnt < self.embeddings_num:
-                    print("ERROR: the captions for %s less than %d" %
-                          (filenames[i], cnt))
-        return all_captions
-
-    def build_dictionary(self, train_captions, test_captions):
-        word_counts = defaultdict(float)
-        captions = train_captions + test_captions
-        for sent in captions:
-            for word in sent:
-                word_counts[word] += 1
-
-        vocab = [w for w in word_counts if word_counts[w] >= 0]
-
-        ixtoword = {}
-        ixtoword[0] = "<end>"
-        wordtoix = {}
-        wordtoix["<end>"] = 0
-        ix = 1
-        for w in vocab:
-            wordtoix[w] = ix
-            ixtoword[ix] = w
-            ix += 1
-
-        train_captions_new = []
-        for t in train_captions:
-            rev = []
-            for w in t:
-                if w in wordtoix:
-                    rev.append(wordtoix[w])
-            # rev.append(0)  # do not need '<end>' token
-            # this train_captions_new hold index of each word in sentence
-            train_captions_new.append(rev)
-
-        test_captions_new = []
-        for t in test_captions:
-            rev = []
-            for w in t:
-                if w in wordtoix:
-                    rev.append(wordtoix[w])
-            # rev.append(0)  # do not need '<end>' token
-            test_captions_new.append(rev)
-
-        return [train_captions_new, test_captions_new, ixtoword, wordtoix, len(ixtoword)]
-
-    def load_text_data(self, data_dir, split):
-        filepath = os.path.join(data_dir, "captions.pickle")
-        train_names = self.load_filenames(data_dir, "train")
-        test_names = self.load_filenames(data_dir, "test")
-        if not os.path.isfile(filepath):
-            train_captions = self.load_captions(data_dir, train_names)
-            test_captions = self.load_captions(data_dir, test_names)
-
-            train_captions, test_captions, ixtoword, wordtoix, n_words = self.build_dictionary(
-                train_captions, test_captions
-            )
-            with open(filepath, "wb") as f:
-                pickle.dump([train_captions, test_captions,
-                             ixtoword, wordtoix], f, protocol=2)
-                print("Save to: ", filepath)
-        else:
-            with open(filepath, "rb") as f:
-                print("filepath", filepath)
-                x = pickle.load(f)
-                train_captions, test_captions = x[0], x[1]
-                ixtoword, wordtoix = x[2], x[3]
-                del x
-                n_words = len(ixtoword)
-                print("Load from: ", filepath)
-        if split == "train":
-            # a list of list: each list contains
-            # the indices of words in a sentence
-            captions = train_captions
-            filenames = train_names
-        else:  # split=='test'
-            captions = test_captions
-            filenames = test_names
-        return filenames, captions, ixtoword, wordtoix, n_words
-
-    def load_class_id(self, data_dir, total_num):
-        if os.path.isfile(data_dir + "/class_info.pickle"):
-            with open(data_dir + "/class_info.pickle", "rb") as f:
-                class_id = pickle.load(f, encoding="latin1")
-        else:
-            class_id = np.arange(total_num)
-        return class_id
-
-    def load_filenames(self, data_dir, split):
-        filepath = "%s/%s/filenames.pickle" % (data_dir, split)
-        if os.path.isfile(filepath):
-            with open(filepath, "rb") as f:
-                filenames = pickle.load(f)
-            print("Load filenames from: %s (%d)" % (filepath, len(filenames)))
-        else:
-            filenames = []
-        return filenames
-
-    def get_caption(self, sent_ix):
-        # a list of indices for a sentence
-        sent_caption = np.asarray(self.captions[sent_ix]).astype("int64")
-        if (sent_caption == 0).sum() > 0:
-            print("ERROR: do not need END (0) token", sent_caption)
-        num_words = len(sent_caption)
-        # pad with 0s (i.e., '<end>')
-        x = np.zeros((self.words_num, 1), dtype="int64")
-        x_len = num_words
-        if num_words <= self.words_num:
-            x[:num_words, 0] = sent_caption
-        else:
-            ix = list(np.arange(num_words))  # 1, 2, 3,..., maxNum
-            np.random.shuffle(ix)
-            ix = ix[: self.words_num]
-            ix = np.sort(ix)
-            x[:, 0] = sent_caption[ix]
-            x_len = self.words_num
-        return x, x_len
-
-    def __getitem__(self, index):
-        new_index = np.random.randint(0, len(self.filenames))
-        while new_index == index:
-            new_index = np.random.randint(0, len(self.filenames))
-        #
-        key = self.filenames[index]
-        new_key = self.filenames[new_index]
-        cls_id = self.class_id[index]
-        #
-        if self.bbox is not None:
-            bbox = self.bbox[key]
-            new_bbox = self.bbox[new_key]
-            data_dir = "%s/CUB_200_2011" % self.data_dir
-        else:
-            bbox = None
-            new_bbox = None
-            data_dir = self.data_dir
-
-        flip = random.rand() > 0.5
-
-        new_w = new_h = int(256 * 76 / 64)
-        x = random.randint(0, np.maximum(0, new_w - 256))
-        y = random.randint(0, np.maximum(0, new_h - 256))
-
-        img_name = "%s/images/%s.jpg" % (data_dir, key)
-        new_img_name = "%s/images/%s.jpg" % (data_dir, new_key)
-
-        img = get_img(img_name, flip, x, y, bbox,
-                      self.transform, normalize=self.norm)
-        new_img = get_img(new_img_name, flip, x, y, new_bbox,
-                          self.transform, normalize=self.norm)
-
-        # random select a sentence
-        sent_ix = random.randint(0, self.embeddings_num)
-        caption_ix = index * self.embeddings_num + sent_ix
-        caps, cap_len = self.get_caption(caption_ix)
-
-        ###
-        wrong_caption_ix = new_index * self.embeddings_num + sent_ix
-        wrong_caps, wrong_cap_len = self.get_caption(wrong_caption_ix)
-        wrong_cls_id = self.class_id[new_index]
-        ###
-        return img, new_img, caps, cap_len, cls_id, key, wrong_caps, wrong_cap_len, wrong_cls_id
+        self.load_text_data()
+        self.tokenize_all_captions()
+        self.make_word_to_idx()
+        self.divide_class()
+        self.drop_small_class()
 
     def __len__(self):
         return len(self.filenames)
+
+    def load_text_data(self):
+        filepath = os.path.join(self.data_path, "train_one_coco.pkl")
+        with open(filepath, "rb") as f:
+            self.captions_table = pickle.load(f)
+            self.filenames = list(self.captions_table.keys())
+
+    def tokenize_all_captions(self):
+        for filename in self.captions_table:
+            captions = self.captions_table[filename][1]
+            tokenized_captions = []
+            for cap in captions:
+                if len(cap) == 0:
+                    continue
+                cap = cap.replace("\ufffd\ufffd", " ")
+                tokenizer = RegexpTokenizer(r"\w+")
+                tokens = tokenizer.tokenize(cap.lower())
+
+                if len(tokens) == 0:
+                    print("cap", filename)
+                    continue
+
+                tokens_new = []
+                for t in tokens:
+                    t = t.encode("ascii", "ignore").decode("ascii")
+                    if len(t) > 0:
+                        tokens_new.append(t)
+                tokenized_captions.append(tokens_new)
+            self.captions_table[filename][1] = tokenized_captions
+    
+    def make_word_to_idx(self):
+        word_counts = defaultdict(float)
+        for filename in self.captions_table.keys():
+            captions = self.captions_table[filename][1]
+            for cap in captions:
+                for word in cap:
+                    word_counts[word] += 1
+        
+        vocab = [w for w in word_counts if word_counts[w] >= 0]
+        self.vocab_size = len(vocab)
+
+        idxtoword = {}
+        idxtoword[0] = "<end>"
+        wordtoidx = {}
+        wordtoidx["<end>"] = 0
+        idx = 1
+        for w in vocab:
+            wordtoidx[w] = idx
+            idxtoword[idx] = w
+            idx += 1
+
+        for filename in self.captions_table.keys():
+            captions = self.captions_table[filename][1]
+            new_captions = []
+            for cap in captions:
+                new_cap = [] 
+                for word in cap:
+                    new_cap.append(wordtoidx[word])
+                new_captions.append(new_cap)
+            self.captions_table[filename][1] = new_captions
+    
+    def divide_class(self):
+        self.categories = {}
+        total_categories = self.captions_table.keys()
+        for filename in self.filenames:
+            category = self.captions_table[filename][0]
+            captions = self.captions_table[filename][1]
+            if category in self.categories.keys():
+                self.categories[category].append(filename)
+            else :
+                self.categories[category] = [filename]
+    
+    def drop_small_class(self):
+        drop_classes = []
+        for key in self.categories.keys():
+            if len(self.categories[key]) < 100:
+                drop_classes.append(key)
+        
+        drop_files = []
+        for filename in self.captions_table.keys():
+            if self.captions_table[filename][0] in drop_classes:
+                drop_files.append(filename)
+        
+        for filename in drop_files:
+            self.captions_table.pop(filename)
+            self.filenames.remove(filename)
+                    
+    def get_caption(self, filename, sent_idx):
+        captions = self.captions_table[filename][1]
+        caption = np.asarray(captions[sent_idx]).astype("int64")
+        
+        num_words = len(caption)
+        cap = np.zeros(self.words_num, dtype="int64")
+        
+        if num_words <= self.words_num:
+            cap[:num_words] = caption
+            cap_len = num_words
+        else :
+            idx = list(np.arange(num_words))
+            np.random.shuffle(idx)
+            idx = idx[: self.words_num]
+            idx = np.sort(idx)
+            cap[:] = caption[idx]
+            cap_len = self.words_num
+
+        return cap, cap_len
+
+    def get_img(self, filename):
+        img_path = self.data_path + '/coco_sample/' + filename
+        img = Image.open(img_path).convert("RGB")
+        width, height = img.size
+        
+        if self.transform is not None:
+            img = self.transform(img)
+            img = img.crop([0, 0, 256, 256])
+        
+        if self.normalize is not None:
+            img = self.normalize(img) 
+            
+        return img
+
+    def __getitem__(self, index):
+        idx1 = index
+        filename1 = self.filenames[idx1]
+        category = self.captions_table[filename1][0]
+
+        category_size = len(self.categories[category])
+
+        idx2 = 0
+        while self.categories[category][idx2] == filename1:
+            idx2 = np.random.randint(0, category_size)
+
+        filename2 = self.categories[category][idx2]
+
+        img1 = self.get_img(filename1)
+        img2 = self.get_img(filename2)
+        
+        source_captions_num = len(self.captions_table[filename1][1])
+        target_captions_num = len(self.captions_table[filename2][1])
+
+        source_cap_idx = np.random.randint(0, source_captions_num)
+        source_cap, source_cap_len = self.get_caption(filename1, source_cap_idx)
+
+        intra_cap_idx = source_cap_idx
+        while intra_cap_idx == source_cap_idx:
+            intra_cap_idx = np.random.randint(0, source_captions_num)
+        intra_cap, intra_cap_len = self.get_caption(filename1, intra_cap_idx)
+
+        inter_cap_idx = np.random.randint(0, target_captions_num)
+        inter_cap, inter_cap_len = self.get_caption(filename2, inter_cap_idx)
+
+        return img1, img2, source_cap, intra_cap, inter_cap 
+
+
+if __name__=='__main__':
+    image_transform = transforms.Compose([
+        transforms.Scale(int(256 * 76 / 64))])
+    dataset = CocoOneCategoryDataset('../data/', transform=image_transform)
+    # dataset.divide_class()
+    # dataset.drop_small_class()
+    
+    # for key in dataset.captions.keys():
+    #     print(key, len(dataset.captions[key]))
+    img1, img2, source_cap, intra_cap, inter_cap = dataset[0]
+    print(np.shape(intra_cap))
+    print(np.shape(inter_cap))
