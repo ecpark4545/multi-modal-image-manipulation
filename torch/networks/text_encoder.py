@@ -14,19 +14,19 @@ def l2norm(X, norm_dim=1):
 
 
 class EncoderText(nn.Module):
-    def __init__(self, vocab_size, word_dim, embed_size, num_layers, use_abs=False, no_txt_norm=False, nonorm=False):
+    def __init__(self, vocab_size, embedding_dim, w_dim, num_layers, use_abs=False, no_txt_norm=False, nonorm=False):
         super(EncoderText, self).__init__()
 
         self.no_txtnorm = no_txt_norm
         self.no_norm_gd = nonorm
         self.use_abs = use_abs
-        self.embed_size = embed_size
+        self.w_dim = w_dim
 
         # word embedding
-        self.embed = nn.Embedding(vocab_size, word_dim)
+        self.embed = nn.Embedding(vocab_size, embedding_dim)
 
         # caption embedding
-        self.rnn = nn.GRU(word_dim, embed_size, num_layers, batch_first=True)
+        self.rnn = nn.GRU(embedding_dim, w_dim, num_layers, batch_first=True)
 
         self.init_weights()
 
@@ -43,13 +43,14 @@ class EncoderText(nn.Module):
         # Forward propagate RNN
         # out, _ = self.rnn(packed)
         out, s = self.rnn(x)
+        s = s.view(s.size(1), s.size(2))
         return out, s
 
         # Reshape *final* output to (batch_size, hidden_size)
         padded = pad_packed_sequence(out, batch_first=True)
         I = torch.LongTensor(lengths).view(-1, 1, 1)
-        #I = Variable(I.expand(x.size(0), 1, self.embed_size)-1).cuda()
-        I = (I.expand(x.size(0), 1, self.embed_size)-1).cuda()
+        #I = Variable(I.expand(x.size(0), 1, self.w_dim)-1).cuda()
+        I = (I.expand(x.size(0), 1, self.w_dim)-1).cuda()
         out = torch.gather(padded[0], 1, I).squeeze(1)
 
         # normalization in the joint embedding space

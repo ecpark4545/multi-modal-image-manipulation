@@ -115,3 +115,25 @@ class MACAMResBlock(nn.Module):
 
     def forward(self, h, w_source, w_target):
         return self.shortcut(h) + self.residual(h, w_source, w_target)
+
+
+# ############## D networks ##########################
+def downBlock(in_planes, out_planes):
+    block = [
+        nn.Conv2d(in_planes, out_planes, 4, 2, 1, bias=False),
+        nn.BatchNorm2d(out_planes),
+        nn.LeakyReLU(0.2, inplace=True)]
+    return block
+
+
+def Block3x3_leakRelu(in_planes, out_planes):
+    block = [
+        conv3x3(in_planes, out_planes),
+        nn.BatchNorm2d(out_planes),
+        nn.LeakyReLU(0.2, inplace=True)]
+    return block
+
+def conv3x3(in_planes, out_planes):
+    "3x3 convolution with padding"
+    return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=1,
+                     padding=1, bias=False)

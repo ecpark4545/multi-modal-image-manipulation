@@ -16,12 +16,12 @@ class Model(nn.Module):
         self._build_optimizer()
 
     def _build_model(self):
-        self.image_enc = ResNetbdcnEncoder(self.opt.edge_level, self.opt.edge_model_path, self.opt.edge_tanh)
-        self.text_enc = EncoderText(self.opt)
+        self.image_enc = ResNetbdcnEncoder(None, None)
+        self.text_enc = EncoderText(self.opt.vocab_size, self.opt.embedding_dim, self.opt.w_dim, self.opt.num_layers)
         self.netG = Generator(
             self.opt.w_dim, self.opt.q_dim, self.opt.img_size)
         self.netD = Discriminator(
-            self.opt.img_size, self.opt.ch_in, self.opt.embedding_dim)
+            self.opt.img_size, self.opt.ndf, self.opt.embedding_dim)
 
     def _build_dataloader(self):
         self.dataset = None
@@ -40,7 +40,7 @@ class Model(nn.Module):
         self.optimizer_D = optimizer_D
 
     def train(self):
-        for i in range(self.total_epochs):
+        for i in range(self.opt.total_iter):
             for data in self.dataset:
                 g_loss = self.compute_g_loss(data)
                 g_loss.backward()
@@ -120,7 +120,7 @@ class Model(nn.Module):
 
         return d_loss
 
-    def cross_entropy_from_logits(logits, target):
+    def cross_entropy_from_logits(self, logits, target):
         assert target in [1, 0]
         targets = torch.full_like(logits, fill_value=target)
         entropy = F.binary_cross_entropy_with_logits(logits, targets)
