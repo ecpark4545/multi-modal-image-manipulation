@@ -8,7 +8,7 @@ from networks.text_encoder import EncoderText
 from networks.generator import Generator
 from networks.discriminator import Discriminator
 
-from new_dataset import CocoOneCategoryDataset
+from dataset import CocoOneCategoryDataset
 
 import numpy as np
 
@@ -61,9 +61,6 @@ class Model(nn.Module):
                 d_loss = self.compute_d_loss(data)
                 d_loss.backward()
                 self.optimizer_D.step()
-                print('train!!!')
-                break
-            break
 
     def compute_g_loss(self, data):
         img1, img2, source_cap, intra_cap, inter_cap = data
