@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 
-from .ops import Block3x3_leakRelu, downBlock
+from networks.ops import *
 
 
 class D_Feature(nn.Module):
@@ -43,26 +43,6 @@ class D_Feature(nn.Module):
         return x
 
 
-class D_Condition(nn.Module):
-    def __init__(self, ch_in=64, embedding_dim=256):
-        super(D_Condition, self).__init__()
-        self.ch_in = ch_in
-        self.embedding_dim = embedding_dim
-        self.joint_conv = nn.Sequential(
-            *Block3x3_leakRelu(self.ch_in * 8 + self.embedding_dim, self.ch_in * 8))
-        self.outlogits = nn.Sequential(
-            nn.Conv2d(self.ch_in * 8, 1, kernel_size=4, stride=4),
-            nn.Sigmoid())
-
-    def forward(self, x, condition):
-        condition = condition.view(-1, self.embedding_dim, 1, 1)
-        condition = condition.repeat(1, 1, 4, 4)
-        x_c = torch.cat((x, condition), 1)
-        x_c = self.joint_conv(x_c)
-        logit = self.outlogits(x_c)
-        return logit.view(-1)
-
-
 class D_Adversarial(nn.Module):
     def __init__(self, ch_in=64):
         super(D_Adversarial, self).__init__()
@@ -77,19 +57,20 @@ class D_Adversarial(nn.Module):
 
 
 class D_Match(nn.Module):
-    def __init__(self, ch_in=64, embedding_dim=256):
+    def __init__(self, ch_in=64, w_dim=1024):
         super(D_Match, self).__init__()
         self.ch_in = ch_in
-        self.embedding_dim = embedding_dim
+        self.w_dim = w_dim
 
         self.jointConv = nn.Sequential(
-            *Block3x3_leakRelu(self.ch_in * 8 * 2 + self.embedding_dim, self.ch_in * 8))
+            *Block3x3_leakRelu(self.ch_in * 8 * 2 + self.w_dim, self.ch_in * 8))
 
         self.outlogits = nn.Sequential(
             nn.Conv2d(self.ch_in * 8, 1, kernel_size=4, stride=4),
             nn.Sigmoid())
 
     def forward(self, x1, x2, s):
+        # print(s.shape)
         s = s.view(s.size(0), s.size(1), 1, 1)
         s = s.repeat(1, 1, x1.size(2), x1.size(3))
         h = torch.cat([x1, x2, s], dim=1)
@@ -99,14 +80,12 @@ class D_Match(nn.Module):
 
 
 class Discriminator(nn.Module):
-    def __init__(self, img_size, ch_in=64, embedding_dim=256):
+    def __init__(self, img_size, ch_in=64, w_dim=1024):
         super(Discriminator, self).__init__()
         self.img_size = img_size
         self.ch_in = ch_in
-        self.embedding_dim = embedding_dim
-        self.D_feature = D_Feature(self.img_size, ch_in=self.ch_in)
-        self.D_condition = D_Condition(
-            ch_in=self.ch_in, embedding_dim=self.embedding_dim)
-        self.D_match = D_Match(
-            ch_in=self.ch_in, embedding_dim=self.embedding_dim)
-        self.D_adv = D_Adversarial(ch_in=self.ch_in)
+        self.w_dim = w_dim
+        self.feature = D_Feature(self.img_size, ch_in=self.ch_in)
+        self.match = D_Match(
+            ch_in=self.ch_in, w_dim=self.w_dim)
+        self.adv = D_Adversarial(ch_in=self.ch_in)
